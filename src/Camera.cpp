@@ -1,13 +1,55 @@
-
 #include "Camera.h"
 
-void Camera::Calibrate(const cv::String& path) {
+template <typename T>
+void writeVectorOfVector(cv::FileStorage& fs, const std::string& name, std::vector<std::vector<T>>& data) {
+	fs << name;
+	fs << "{";
+	for (int i = 0; i < data.size(); i++) {
+		fs << name + "_" + std::to_string(i);
+		std::vector<T> temp = data[i];
+		fs << temp;
+	}
+	fs << "}";
+}
+
+template <typename T>
+void readVectorOfVector(cv::FileStorage& fns, const std::string& name, std::vector<std::vector<T>>& data) {
+	data.clear();
+	cv::FileNode fn = fns[name];
+	if (fn.empty()) {
+		return;
+	}
+
+	cv::FileNodeIterator current_iter = fn.begin();
+	cv::FileNodeIterator iter_end = fn.end();
+	for (; current_iter != iter_end; ++current_iter) {
+		std::vector<T> temp;
+		cv::FileNode item = *current_iter;
+		item >> temp;
+		data.push_back(temp);
+	}
+}
+
+
+Camera::Camera(const cv::String& filename) : cam_intrinsics_(cv::Matx33f::eye()), dist_coeffs_(0, 0, 0, 0, 0) {
+	cv::FileStorage file(filename, cv::FileStorage::READ);
+	file["Intrinsics"] >> cam_intrinsics_;
+	file["Distortion"] >> dist_coeffs_;
+	std::cout << cam_intrinsics_ << std::endl;
+	std::cout << dist_coeffs_ << std::endl;
+}
+
+void Camera::Calibrate(const cv::String& path, const cv::String& filename, const cv::String& img_points_file, const cv::String& obj_points_file) {
 	std::vector<cv::String> file_names;
 	cv::glob(path, file_names, false);
 	cv::Size pattern_size(8, 5);
 	image_points_.resize(file_names.size());
 	std::vector<cv::Point3f> obj_points;
-	cv::FileStorage fs("intrinsics.yaml", cv::FileStorage::WRITE);
+
+	cv::FileStorage fs(filename, cv::FileStorage::WRITE);
+	cv::FileStorage points(img_points_file, cv::FileStorage::WRITE);
+	cv::FileStorage points_3d(obj_points_file, cv::FileStorage::WRITE);
+
 	const int chess_board[2] = { 9, 6 };
 	const int field_size = 30;
 	for (int i = 1; i < chess_board[1]; i++) {
@@ -37,40 +79,50 @@ void Camera::Calibrate(const cv::String& path) {
 		i++;
 	}
 	cv::destroyWindow("Chessboard detection");
+	writeVectorOfVector(points, "values", image_points_);
+	writeVectorOfVector(points_3d, "values", object_points_);
+	points.release();
+	points_3d.release();
 	std::vector<cv::Mat> rvecs, tvecs;
 	std::vector<double> std_intrinsics, std_extrinsics;
 	cv::Size frame_size(1920, 1080);
 	std::vector<cv::Point3f> new_obj_points;
 	std::cout << "Calibrating..." << std::endl;
-	//double errorRO = cv::calibrateCameraRO(object_points_, image_points_, frame_size, 1, cam_intrinsics_, dist_coeffs_, rvecs, tvecs, new_obj_points);
-	float error = cv::calibrateCamera(object_points_, image_points_, frame_size, cam_intrinsics_, dist_coeffs_, rvecs, tvecs);
-	std::cout << "Reprojection error: " << error << "\nK:\n" << cam_intrinsics_ << "\nk:\n" << dist_coeffs_ << std::endl;
+	double errorRO = cv::calibrateCameraRO(object_points_, image_points_, frame_size, 1, cam_intrinsics_, dist_coeffs_, rvecs, tvecs, new_obj_points);
+	//float error = cv::calibrateCamera(object_points_, image_points_, frame_size, cam_intrinsics_, dist_coeffs_, rvecs, tvecs);
+	std::cout << "Reprojection error: " << errorRO << "\nK:\n" << cam_intrinsics_ << "\nk:\n" << dist_coeffs_ << std::endl;
 	std::vector<cv::Point2f> imagePoints2;
 	size_t totalPoints = 0;
 	double totalErr = 0, err;
 	std::vector<float> perViewErrors;
 	perViewErrors.resize(object_points_.size());
 
-	for (size_t i = 0; i < object_points_.size(); ++i) {
+	/*for (size_t i = 0; i < object_points_.size(); ++i) {
 		projectPoints(object_points_[i], rvecs[i], tvecs[i], cam_intrinsics_, dist_coeffs_, imagePoints2);
 		err = norm(image_points_[i], imagePoints2, cv::NORM_L2);
 
 		size_t n = object_points_[i].size();
 		perViewErrors[i] = (float)std::sqrt(err * err / n);
 		std::cout << perViewErrors[i] << "\tError:\t" << file_names[i] << std::endl;
-	}
-	fs << "Intrinsics " << cam_intrinsics_;
+	}*/
+	fs << "Intrinsics" << cam_intrinsics_;
+	fs << "Distortion" << dist_coeffs_;
 	//cv::Mat map_x, map_y;
 	//cv::initUndistortRectifyMap(cam_intrinsics_, dist_coeffs_, cv::Mat::eye(cv::Size(3, 3), CV_32F), cam_intrinsics_, frame_size, CV_32FC1, map_x, map_y);
 
 	/*for (auto const& f : file_names) {
 		std::cout << std::string(f) << std::endl;
-
 		cv::Mat img = cv::imread(f, cv::IMREAD_COLOR);
+		cv::Mat img_undistorted, new_camera_matrix;
+		cv::Size img_size = cv::Size(1920, 1080);
+		//cv::remap(img, img_undistorted, map_x, map_y, cv::INTER_LINEAR);
+		new_camera_matrix = cv::getOptimalNewCameraMatrix(cam_intrinsics_, dist_coeffs_, img_size, 1, img_size, 0);
 
-		cv::Mat img_undistorted;
-		cv::remap(img, img_undistorted, map_x, map_y, cv::INTER_LINEAR);
+		cv::undistort(img, img_undistorted, new_camera_matrix, dist_coeffs_, new_camera_matrix);
+
 		cv::namedWindow("Undistorted image", cv::WINDOW_FREERATIO);
+		cv::namedWindow("Chessboard detection", cv::WINDOW_FREERATIO);
+		cv::imshow("Chessboard detection", img);
 		cv::imshow("Undistorted image", img_undistorted);
 		cv::waitKey(0);
 	}*/
@@ -125,12 +177,26 @@ void Camera::CalibrateCharuco(const cv::String& path) {
 	std::cout << "Reprojection error: " << repError << "\nK:\n" << cam_intrinsics_ << "\nk:\n" << dist_coeffs_ << std::endl;
 }
 
-void CalibrateStereo(Camera& camera1, Camera& camera2) {
+void CalibrateStereo(Camera& camera1, Camera& camera2, const cv::String& filename, bool is_first) {
 	cv::Mat essent_mat, fund_mat;
 	cv::Matx33f rot;
 	cv::Matx31f trns;
-	int flags = cv::CALIB_USE_INTRINSIC_GUESS;
-	cv::FileStorage fs("extrinsics.yaml", cv::FileStorage::WRITE);
+	int flags = cv::CALIB_FIX_INTRINSIC;
+	cv::FileStorage fs(filename, cv::FileStorage::WRITE);
+	if (!is_first) {
+		cv::FileStorage first_img_points("imagePointsFirst.yaml", cv::FileStorage::READ);
+		cv::FileStorage first_obj_points("objectPointsFirst.yaml", cv::FileStorage::READ);
+		cv::FileStorage second_img_points("imagePointsSecond.yaml", cv::FileStorage::READ);
+		cv::FileStorage second_obj_points("objectPointsSecond.yaml", cv::FileStorage::READ);
+		readVectorOfVector(first_img_points, "values", camera1.image_points_);
+		first_img_points.release();
+		readVectorOfVector(first_obj_points, "values", camera1.object_points_);
+		first_obj_points.release();
+		readVectorOfVector(second_img_points, "values", camera2.image_points_);
+		second_img_points.release();
+		readVectorOfVector(second_obj_points, "values", camera2.object_points_);
+		second_obj_points.release();
+	}
 
 	double stereo_error = cv::stereoCalibrate(camera1.object_points_, camera1.image_points_, camera2.image_points_,
 		camera1.cam_intrinsics_, camera1.dist_coeffs_,
@@ -145,6 +211,10 @@ void CalibrateStereo(Camera& camera1, Camera& camera2) {
 	cv::Matx31f cam1_trns(0,
 						  0,
 						  0);
+
+	cv::Matx31f cam2_trns(-201.62062,
+		0.6191784,
+		-0.1714314);
 
 	cv::hconcat(cam1_rot, cam1_trns, camera1.cam_extrinsics_);
 	cv::hconcat(rot, trns, camera2.cam_extrinsics_);
@@ -240,11 +310,11 @@ bool EquateVectors(std::vector<std::vector<cv::Point2f>>& corners, std::vector<i
 }
 
 void FindMarkers(const cv::String& filename, const Camera& camera1, const Camera& camera2) {
-	cv::VideoCapture input1(1, 0);
+	cv::VideoCapture input1(2, 0);
 	input1.set(cv::CAP_PROP_FRAME_WIDTH, 1920);
 	input1.set(cv::CAP_PROP_FRAME_HEIGHT, 1080);
 	input1.set(cv::CAP_PROP_FPS, 30);
-	cv::VideoCapture input2(2, 0);
+	cv::VideoCapture input2(1, 0);
 	input2.set(cv::CAP_PROP_FRAME_WIDTH, 1920);
 	input2.set(cv::CAP_PROP_FRAME_HEIGHT, 1080);
 	input2.set(cv::CAP_PROP_FPS, 30);
@@ -288,6 +358,11 @@ void FindMarkers(const cv::String& filename, const Camera& camera1, const Camera
 		//cv::undistort(image2, image_copy2, camera2.cam_intrinsics_, camera2.dist_coeffs_);
 		cv::aruco::detectMarkers(image1, dictionary, corners, ids, detector_params, rejected);
 		cv::aruco::detectMarkers(image2, dictionary, corners2, ids2, detector_params, rejected2);
+		std::map<int, std::vector<cv::Point2f>> camera1_map;
+		std::transform(ids.begin(), ids.end(), corners.begin(), std::inserter(camera1_map, camera1_map.end()), [](int a, std::vector<cv::Point2f>& b)
+			{
+				return std::make_pair(a, b);
+			});
 		// if at least one marker detected
 		if ((ids.size() > 0) && (ids2.size() > 0)) {
 			bool is_equal = false;
@@ -296,11 +371,13 @@ void FindMarkers(const cv::String& filename, const Camera& camera1, const Camera
 			//cv::imshow("Chess", image_copy1);
 			//cv::imshow("Chess2", image_copy2);
 			for (size_t i = 0; i < ids.size(); i++) {
-				std::cout << ids[i] << "\t";
+				std::cout << ids[i] << "\n";
+				std::cout << corners[i] << "\n";
 			}
 			std::cout << "\n";
-			for (size_t i = 0; i < ids2.size(); i++) {
-				std::cout << ids2[i] << "\t";
+			std::cout << "------------------------------------" << std::endl;
+			for (auto it = camera1_map.cbegin(); it != camera1_map.cend(); ++it) {
+				std::cout << it->first << " " << it->second[0] << "\n";
 			}
 			std::cout << "\n";
 			std::cout << "Start" << std::endl;
