@@ -16,8 +16,17 @@ void ZhangCalibration(const cv::String& path);
 
 
 int main() {
-	Camera first;
-	Camera second;
+	/*cv::Ptr<cv::aruco::GridBoard> board = cv::aruco::GridBoard::create(2, 2, 105, 10, cv::aruco::getPredefinedDictionary(cv::aruco::DICT_6X6_50), 12);
+	cv::Mat boardImage;
+	board->draw(cv::Size(1920, 1080), boardImage);
+	cv::imwrite("Attempt4.jpg", boardImage);*/
+
+	Camera first("firstIntrinsics10.yaml");
+	//Camera first;
+	Camera second("secondIntrinsics10.yaml");
+	//Camera second;
+	//first.Calibrate("C:/Users/Michael Sk/Pictures/SplitCam/1/marker2/41/image*.jpg", "firstIntrinsics10.yaml", "imagePointsFirst2.yaml", "objectPointsFirst2.yaml");
+	//second.Calibrate("C:/Users/Michael Sk/Pictures/SplitCam/1/marker2/42/image*.jpg", "secondIntrinsics10.yaml", "imagePointsSecond2.yaml", "objectPointsSecond2.yaml");
 	/*cv::Mat m(1920, 1080, CV_8UC1);
 	cv::Ptr< cv::aruco::Dictionary > dict = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_5X5_50);
 	cv::Ptr< cv::aruco::CharucoBoard > charuco = cv::aruco::CharucoBoard::create(9, 7, 0.02, 0.015, dict);
@@ -35,10 +44,10 @@ int main() {
 	//std::vector<cv::Mat> rvecs, tvecs;
 	//int calibrationFlags = ... // Set calibration flags (same than in calibrateCamera() function)
 	//	double repError = cv::aruco::calibrateCameraCharuco(allCharucoCorners, allCharucoIds, board, imgSize, cameraMatrix, distCoeffs, rvecs, tvecs, calibrationFlags);
-	first.Calibrate("C:/Users/Michael Sk/Pictures/SplitCam/1/marker2/17/image*.jpg");
-	second.Calibrate("C:/Users/Michael Sk/Pictures/SplitCam/1/marker2/18/image*.jpg");
-	CalibrateStereo(first, second);
-	FindMarkers("markers.yaml", first, second);
+	//first.Calibrate("C:/Users/Michael Sk/Pictures/SplitCam/1/marker2/17/image*.jpg", "firstIntrinsics.yaml");
+	//second.Calibrate("C:/Users/Michael Sk/Pictures/SplitCam/1/marker2/18/image*.jpg", "secondIntrinsics.yaml");
+	CalibrateStereo(first, second, "newExtrinsics10.yaml", false);
+	FindMarkers("DynamicExperemY2.xml", first, second);
 	//ZhangCalibration("C:/Users/Michael Sk/Pictures/SplitCam/1/old/image*.jpg");
 	/*cv::VideoCapture webcam(1, 0);
 	webcam.set(cv::CAP_PROP_FRAME_WIDTH, 1280);

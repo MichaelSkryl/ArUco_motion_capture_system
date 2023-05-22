@@ -88,9 +88,9 @@ void Camera::Calibrate(const cv::String& path, const cv::String& filename, const
 	cv::Size frame_size(1920, 1080);
 	std::vector<cv::Point3f> new_obj_points;
 	std::cout << "Calibrating..." << std::endl;
-	double errorRO = cv::calibrateCameraRO(object_points_, image_points_, frame_size, 1, cam_intrinsics_, dist_coeffs_, rvecs, tvecs, new_obj_points);
-	//float error = cv::calibrateCamera(object_points_, image_points_, frame_size, cam_intrinsics_, dist_coeffs_, rvecs, tvecs);
-	std::cout << "Reprojection error: " << errorRO << "\nK:\n" << cam_intrinsics_ << "\nk:\n" << dist_coeffs_ << std::endl;
+	//double errorRO = cv::calibrateCameraRO(object_points_, image_points_, frame_size, 1, cam_intrinsics_, dist_coeffs_, rvecs, tvecs, new_obj_points);
+	float error = cv::calibrateCamera(object_points_, image_points_, frame_size, cam_intrinsics_, dist_coeffs_, rvecs, tvecs);
+	std::cout << "Reprojection error: " << error << "\nK:\n" << cam_intrinsics_ << "\nk:\n" << dist_coeffs_ << std::endl;
 	std::vector<cv::Point2f> imagePoints2;
 	size_t totalPoints = 0;
 	double totalErr = 0, err;
@@ -212,9 +212,9 @@ void CalibrateStereo(Camera& camera1, Camera& camera2, const cv::String& filenam
 						  0,
 						  0);
 
-	cv::Matx31f cam2_trns(-201.62062,
-		0.6191784,
-		-0.1714314);
+	cv::Matx31f cam2_trns(trns(0),
+		0,
+		trns(2));
 
 	cv::hconcat(cam1_rot, cam1_trns, camera1.cam_extrinsics_);
 	cv::hconcat(rot, trns, camera2.cam_extrinsics_);
@@ -309,12 +309,23 @@ bool EquateVectors(std::vector<std::vector<cv::Point2f>>& corners, std::vector<i
 	return true;
 }
 
+std::map<int, std::vector<cv::Point2f>>& appendElements(std::map<int, std::vector<cv::Point2f>>& current, const std::map<int, std::vector<cv::Point2f>>& previous) {
+	std::map<int, std::vector<cv::Point2f>>::iterator curr_iter;
+	for (auto iter = previous.cbegin(); iter != previous.cend(); iter++) {
+		curr_iter = current.find(iter->first);
+		if (curr_iter == current.end()) {
+			current.insert(iter, std::next(iter));
+		}
+	}
+	return current;
+}
+
 void FindMarkers(const cv::String& filename, const Camera& camera1, const Camera& camera2) {
-	cv::VideoCapture input1(2, 0);
+	cv::VideoCapture input1(1, 0);
 	input1.set(cv::CAP_PROP_FRAME_WIDTH, 1920);
 	input1.set(cv::CAP_PROP_FRAME_HEIGHT, 1080);
 	input1.set(cv::CAP_PROP_FPS, 30);
-	cv::VideoCapture input2(1, 0);
+	cv::VideoCapture input2(2, 0);
 	input2.set(cv::CAP_PROP_FRAME_WIDTH, 1920);
 	input2.set(cv::CAP_PROP_FRAME_HEIGHT, 1080);
 	input2.set(cv::CAP_PROP_FPS, 30);
@@ -322,19 +333,12 @@ void FindMarkers(const cv::String& filename, const Camera& camera1, const Camera
 		return;
 	}
 	cv::FileStorage fs(filename, cv::FileStorage::WRITE);
-
-	//std::vector<std::vector<std::vector<cv::Point2f>>> camera1_corners;
-	//std::vector<std::vector<int>> camera1_ids;
-	//std::vector<std::vector<std::vector<cv::Point2f>>> camera2_corners;
-	//std::vector<std::vector<int>> camera2_ids;
-	//double totalTime = 0;
-	//int totalIterations = 0;
 	cv::Ptr<cv::aruco::DetectorParameters> detector_params = cv::aruco::DetectorParameters::create();
 	cv::Ptr<cv::aruco::Dictionary> dictionary = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_6X6_50);
-	//std::vector<cv::String> file_names;
-	//std::vector<cv::String> file_names2;
-	//cv::glob("C:/Users/Michael Sk/Pictures/SplitCam/1/marker/1/image*.jpg", file_names, false);
-	//cv::glob("C:/Users/Michael Sk/Pictures/SplitCam/1/marker/2/image*.jpg", file_names2, false);
+	
+	bool is_first = true;
+	std::map<int, std::vector<cv::Point2f>> temp_map1;
+	std::map<int, std::vector<cv::Point2f>> temp_map2;
 
 	while (input1.grab() && input2.grab()) {
 	//for (auto const& f : file_names) {
@@ -351,6 +355,9 @@ void FindMarkers(const cv::String& filename, const Camera& camera1, const Camera
 		std::vector<int> ids2;
 		std::vector<std::vector<cv::Point2f>> corners, rejected;
 		std::vector<std::vector<cv::Point2f>> corners2, rejected2;
+
+		//cv::undistort(image1, image_copy1, camera1.cam_intrinsics_, camera1.dist_coeffs_);
+		//cv::undistort(image2, image_copy2, camera2.cam_intrinsics_, camera2.dist_coeffs_);
 		//std::vector<cv::Vec3d> camera1_rvecs, camera1_tvecs;
 		//std::vector<cv::Vec3d> camera2_rvecs, camera2_tvecs;
 		//std::vector<cv::Vec3d> marker_centers, marker_centers2;
@@ -359,10 +366,7 @@ void FindMarkers(const cv::String& filename, const Camera& camera1, const Camera
 		cv::aruco::detectMarkers(image1, dictionary, corners, ids, detector_params, rejected);
 		cv::aruco::detectMarkers(image2, dictionary, corners2, ids2, detector_params, rejected2);
 		std::map<int, std::vector<cv::Point2f>> camera1_map;
-		std::transform(ids.begin(), ids.end(), corners.begin(), std::inserter(camera1_map, camera1_map.end()), [](int a, std::vector<cv::Point2f>& b)
-			{
-				return std::make_pair(a, b);
-			});
+		std::map<int, std::vector<cv::Point2f>> camera2_map;
 		// if at least one marker detected
 		if ((ids.size() > 0) && (ids2.size() > 0)) {
 			bool is_equal = false;
@@ -373,125 +377,145 @@ void FindMarkers(const cv::String& filename, const Camera& camera1, const Camera
 			for (size_t i = 0; i < ids.size(); i++) {
 				std::cout << ids[i] << "\n";
 				std::cout << corners[i] << "\n";
+				//std::cout << centers[i] << "\n";
 			}
-			std::cout << "\n";
-			std::cout << "------------------------------------" << std::endl;
-			for (auto it = camera1_map.cbegin(); it != camera1_map.cend(); ++it) {
-				std::cout << it->first << " " << it->second[0] << "\n";
-			}
-			std::cout << "\n";
 			std::cout << "Start" << std::endl;
 			//is_equal = EquateVectors(corners, ids, corners2, ids2);
 			std::cout << "Finish" << std::endl;
-			for (size_t i = 0; i < ids.size(); i++) {
-				std::cout << ids[i] << "\t";
-			}
-			std::cout << "\n";
-			for (size_t i = 0; i < ids2.size(); i++) {
-				std::cout << ids2[i] << "\t";
-			}
-			std::cout << "\n";
 			//std::cout << corners[0][0] << std::endl;
 			is_equal = EquateVectors(corners, ids, corners2, ids2);
 			if (is_equal) {
-				//cv::aruco::estimatePoseSingleMarkers(corners, marker_size, camera1.cam_intrinsics_, camera1.dist_coeffs_, camera1_rvecs, camera1_tvecs);
-				//cv::aruco::estimatePoseSingleMarkers(corners2, marker_size, camera2.cam_intrinsics_, camera2.dist_coeffs_, camera2_rvecs, camera2_tvecs);
-				//marker_centers[0] = { camera1_tvecs[0][0], camera1_tvecs[0][1], camera1_tvecs[0][2] };
-				//marker_centers2[0] = { camera2_tvecs[0][0], camera2_tvecs[0][1], camera2_tvecs[0][2] };
-				std::cout << ids[0] << "\t" << ids2[0] << std::endl;
-				//std::cout << ids[1] << "\t" << ids2[1] << std::endl;
-				std::vector<cv::Mat> pnts3D(3);
-				if (ids.size() > 2 && ids2.size() > 2) {
-					cv::triangulatePoints(camera1.projection_mat_, camera2.projection_mat_, corners[0], corners2[0], pnts3D[0]);
-					cv::triangulatePoints(camera1.projection_mat_, camera2.projection_mat_, corners[1], corners2[1], pnts3D[1]);
-					cv::triangulatePoints(camera1.projection_mat_, camera2.projection_mat_, corners[2], corners2[2], pnts3D[2]);
-				} else if (ids.size() > 1 && ids2.size() > 1) {
-					cv::triangulatePoints(camera1.projection_mat_, camera2.projection_mat_, corners[0], corners2[0], pnts3D[0]);
-					cv::triangulatePoints(camera1.projection_mat_, camera2.projection_mat_, corners[1], corners2[1], pnts3D[1]);
-				} else {
-					cv::triangulatePoints(camera1.projection_mat_, camera2.projection_mat_, corners[0], corners2[0], pnts3D[0]);
+				/*std::vector<std::vector<cv::Point2f>>  centers(corners.size());
+				std::vector<std::vector<cv::Point2f>>  centers2(corners2.size());
+				for (size_t i = 0; i < corners.size(); i++) {
+					double center_x = (corners[i][0].x + corners[i][1].x + corners[i][2].x + corners[i][3].x) / 4;
+					double center_y = (corners[i][0].y + corners[i][1].y + corners[i][2].y + corners[i][3].y) / 4;
+					centers[i].push_back(cv::Point2f(center_x, center_y));
 				}
+				for (size_t i = 0; i < ids.size(); i++) {
+					std::cout << "------------------CENTERS-----------------" << std::endl;
+					std::cout << ids[i] << "\n";
+					std::cout << centers[i] << "\n";
+				}
+				for (size_t i = 0; i < corners2.size(); i++) {
+					double center_x = (corners2[i][0].x + corners2[i][1].x + corners2[i][2].x + corners2[i][3].x) / 4;
+					double center_y = (corners2[i][0].y + corners2[i][1].y + corners2[i][2].y + corners2[i][3].y) / 4;
+					centers2[i].push_back(cv::Point2f(center_x, center_y));
+				}
+				std::transform(ids.begin(), ids.end(), centers.begin(), std::inserter(camera1_map, camera1_map.end()), [](int a, std::vector<cv::Point2f>& b)
+					{
+						return std::make_pair(a, b);
+					});
+				std::transform(ids2.begin(), ids2.end(), centers2.begin(), std::inserter(camera2_map, camera2_map.end()), [](int a, std::vector<cv::Point2f>& b)
+					{
+						return std::make_pair(a, b);
+					});*/
+				std::transform(ids.begin(), ids.end(), corners.begin(), std::inserter(camera1_map, camera1_map.end()), [](int a, std::vector<cv::Point2f>& b)
+					{
+						return std::make_pair(a, b);
+					});
+				std::transform(ids2.begin(), ids2.end(), corners2.begin(), std::inserter(camera2_map, camera2_map.end()), [](int a, std::vector<cv::Point2f>& b)
+					{
+						return std::make_pair(a, b);
+					});
+				std::cout << "\n";
+				std::cout << "+++++++++++++++++++++++++++++++++++++" << std::endl;
+				for (auto it = temp_map1.cbegin(); it != temp_map1.cend(); ++it) {
+					std::cout << it->first << " " << it->second[0] << "\n";
+				}
+				std::cout << "\n";
+				std::cout << temp_map1.size() << std::endl;
+				std::cout << "+++++++++++++++++++++++++++++++++++++\n" << std::endl;
+				std::cout << "\n";
+				std::cout << "+++++++++++++++++++++++++++++++++++++" << std::endl;
+				for (auto it = temp_map2.cbegin(); it != temp_map2.cend(); ++it) {
+					std::cout << it->first << " " << it->second[0] << "\n";
+				}
+				std::cout << "\n";
+				std::cout << temp_map2.size() << std::endl;
+				std::cout << "2222222222222222222222222222222222222\n" << std::endl;
+				std::cout << "\n";
+				std::cout << "------------------------------------" << std::endl;
+				for (auto it = camera1_map.cbegin(); it != camera1_map.cend(); ++it) {
+					std::cout << it->first << " " << it->second[0] << "\n";
+				}
+				std::cout << "\n";
+				std::cout << "------------------------------------\n" << std::endl;
+				std::cout << "22222222222222222222222222222222222222" << std::endl;
+				for (auto it = camera2_map.cbegin(); it != camera2_map.cend(); ++it) {
+					std::cout << it->first << " " << it->second[0] << "\n";
+				}
+				std::cout << "\n";
+				std::cout << "2222222222222222222222222222222222222\n" << std::endl;
+				if (is_first) {
+					temp_map1 = camera1_map;
+					temp_map2 = camera2_map;
+					is_first = false;
+				} else {
+					if (temp_map1.size() > camera1_map.size()) {
+						camera1_map = appendElements(camera1_map, temp_map1);
+						camera2_map = appendElements(camera2_map, temp_map2);
+					}
+					temp_map1 = camera1_map;
+					temp_map2 = camera2_map;
+				}
+				std::cout << "\n";
+				std::cout << "------------------------------------" << std::endl;
+				for (auto it = camera1_map.cbegin(); it != camera1_map.cend(); ++it) {
+					std::cout << it->first << " " << it->second[0] << "\n";
+				}
+				std::cout << "\n";
+				std::cout << camera1_map.size() << std::endl;
+				std::cout << "------------------------------------\n" << std::endl;
+				std::cout << "\n";
+				std::cout << "22222222222222222222222222222222222222" << std::endl;
+				for (auto it = camera2_map.cbegin(); it != camera2_map.cend(); ++it) {
+					std::cout << it->first << " " << it->second[0] << "\n";
+				}
+				std::cout << "\n";
+				std::cout << camera2_map.size() << std::endl;
+				std::cout << "2222222222222222222222222222222222222\n" << std::endl;
+				//std::cout << ids[1] << "\t" << ids2[1] << std::endl;
+				//std::vector<cv::Vec4f> pnts3D(camera1_map.size());
+				std::vector<cv::Mat> pnts3D(4);
+				std::vector<cv::Point3f> points(camera1_map.size(), cv::Point3f(0, 0, 0));
+				std::map<int, std::vector<cv::Point2f>>::iterator it2 = camera2_map.begin();
+				std::map<int, cv::Point3f> id_point;
+				
+				int counter = 0;
+				fs << "Frame";
+				fs << "{";
+				for (auto it = camera1_map.cbegin(); it != camera1_map.cend(); ++it) {
+					std::cout << "Triang" << std::endl;
+					cv::triangulatePoints(camera1.projection_mat_, camera2.projection_mat_, it->second, it2->second, pnts3D[counter]);
+					std::cout << "OK" << std::endl;
+					points[counter] = { pnts3D[counter].at<float>(0, 0)/ pnts3D[counter].at<float>(3, 0), pnts3D[counter].at<float>(1, 0) / pnts3D[counter].at<float>(3, 0), pnts3D[counter].at<float>(2, 0) / pnts3D[counter].at<float>(3, 0) };
+					//points[counter] = { pnts3D[counter](0) / pnts3D[counter](3), pnts3D[counter](1) / pnts3D[counter](3), pnts3D[counter](2) / pnts3D[counter](3) };
+					std::cout << "Insert" << std::endl;
+					id_point.insert({ it->first, points[counter] });
+					std::cout <<  it->first << "\t" << id_point[it->first] << std::endl;
+				
+					std::cout << "OK" << std::endl;
+					std::cout << "File" << std::endl;
+					fs << "Mapping";
+					fs << "{" << "Id" << it->first;
+					fs << "X" << id_point[it->first].x;
+					fs << "Y" << id_point[it->first].y;
+					fs << "Z" << id_point[it->first].z;
+					fs << "}";
+					std::cout << "OK" << std::endl;
+					it2++;
+					counter++;
+				}
+				fs << "}";
 				char key = (char)cv::waitKey(10);
 				if (key == 's') {
 					std::cout << pnts3D[0] << std::endl;
-					cv::Point3f point = { pnts3D[0].at<float>(0, 0) / pnts3D[0].at<float>(3, 0), pnts3D[0].at<float>(1, 0) / pnts3D[0].at<float>(3, 0), pnts3D[0].at<float>(2, 0) / pnts3D[0].at<float>(3, 0) };
-					fs << "Coordinates " << point;
+					//cv::Point3f point = { pnts3D[0].at<float>(0, 0) / pnts3D[0].at<float>(3, 0), pnts3D[0].at<float>(1, 0) / pnts3D[0].at<float>(3, 0), pnts3D[0].at<float>(2, 0) / pnts3D[0].at<float>(3, 0) };
+					//fs << "Coordinates " << point;
 					std::cout << "saved" << std::endl;
 				}
 				//std::cout << pnts3D[1] << std::endl;
-				std::stringstream wrist;
-				std::stringstream elbow;
-				std::stringstream shoulder;
-				std::vector<cv::Point3f> points;
-				points.resize(3);
-				if (ids.size() > 2 && ids2.size() > 2) {
-					points[0] = { pnts3D[0].at<float>(0, 0) / pnts3D[0].at<float>(3, 0), pnts3D[0].at<float>(1, 0) / pnts3D[0].at<float>(3, 0), pnts3D[0].at<float>(2, 0) / pnts3D[0].at<float>(3, 0) };
-					points[1] = { pnts3D[1].at<float>(0, 0) / pnts3D[1].at<float>(3, 0), pnts3D[1].at<float>(1, 0) / pnts3D[1].at<float>(3, 0), pnts3D[1].at<float>(2, 0) / pnts3D[1].at<float>(3, 0) };
-					points[2] = { pnts3D[2].at<float>(0, 0) / pnts3D[2].at<float>(3, 0), pnts3D[2].at<float>(1, 0) / pnts3D[2].at<float>(3, 0), pnts3D[2].at<float>(2, 0) / pnts3D[2].at<float>(3, 0) };
-					//putText(image1, cv::format("Right wrist(%f,%f,)", points[0].x, points[0].y), cv::Point(50, 50), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.8, cv::Scalar(255, 255, 204), 1, false);
-					if (ids[0] == 21) {
-						cv::putText(image1, cv::format("Right wrist: (%f,%f, %f)", points[0].x, points[0].y, points[0].z), cv::Point(50, 50), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.8, cv::Scalar(255, 255, 204), 1, false);
-						if (ids[1] == 0) {
-							cv::putText(image1, cv::format("Right elbow: (%f,%f, %f)", points[1].x, points[1].y, points[1].z), cv::Point(50, 70), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.8, cv::Scalar(255, 255, 204), 1, false);
-							cv::putText(image1, cv::format("Right shoulder: (%f,%f, %f)", points[2].x, points[2].y, points[2].z), cv::Point(50, 90), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.8, cv::Scalar(255, 255, 204), 1, false);
-						} else {
-							cv::putText(image1, cv::format("Right shoulder: (%f,%f, %f)", points[1].x, points[1].y, points[1].z), cv::Point(50, 70), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.8, cv::Scalar(255, 255, 204), 1, false);
-							cv::putText(image1, cv::format("Right elbow: (%f,%f, %f)", points[2].x, points[2].y, points[2].z), cv::Point(50, 90), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.8, cv::Scalar(255, 255, 204), 1, false);
-						}
-					} else if (ids[0] == 14) {
-						cv::putText(image1, cv::format("Right shoulder: (%f,%f, %f)", points[0].x, points[0].y, points[0].z), cv::Point(50, 50), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.8, cv::Scalar(255, 255, 204), 1, false);
-						if (ids[1] == 0) {
-							cv::putText(image1, cv::format("Right elbow: (%f,%f, %f)", points[1].x, points[1].y, points[1].z), cv::Point(50, 70), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.8, cv::Scalar(255, 255, 204), 1, false);
-							cv::putText(image1, cv::format("Right wrist: (%f,%f, %f)", points[2].x, points[2].y, points[2].z), cv::Point(50, 90), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.8, cv::Scalar(255, 255, 204), 1, false);
-						} else {
-							cv::putText(image1, cv::format("Right wrist: (%f,%f, %f)", points[1].x, points[1].y, points[1].z), cv::Point(50, 70), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.8, cv::Scalar(255, 255, 204), 1, false);
-							cv::putText(image1, cv::format("Right elbow: (%f,%f, %f)", points[2].x, points[2].y, points[2].z), cv::Point(50, 90), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.8, cv::Scalar(255, 255, 204), 1, false);
-						}
-					} else {
-						cv::putText(image1, cv::format("Right elbow: (%f,%f, %f)", points[0].x, points[0].y, points[0].z), cv::Point(50, 50), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.8, cv::Scalar(255, 255, 204), 1, false);
-						if (ids[1] == 14) {
-							cv::putText(image1, cv::format("Right wrist: (%f,%f, %f)", points[1].x, points[1].y, points[1].z), cv::Point(50, 70), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.8, cv::Scalar(255, 255, 204), 1, false);
-							cv::putText(image1, cv::format("Right shoulder: (%f,%f, %f)", points[2].x, points[2].y, points[2].z), cv::Point(50, 90), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.8, cv::Scalar(255, 255, 204), 1, false);
-						} else {
-							cv::putText(image1, cv::format("Right shoulder: (%f,%f, %f)", points[1].x, points[1].y, points[1].z), cv::Point(50, 70), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.8, cv::Scalar(255, 255, 204), 1, false);
-							cv::putText(image1, cv::format("Right wrist: (%f,%f, %f)", points[2].x, points[2].y, points[2].z), cv::Point(50, 90), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.8, cv::Scalar(255, 255, 204), 1, false);
-						}
-					}
-				} else if (ids.size() > 1 && ids2.size() > 1) {
-					points[0] = { pnts3D[0].at<float>(0, 0) / pnts3D[0].at<float>(3, 0), pnts3D[0].at<float>(1, 0) / pnts3D[0].at<float>(3, 0), pnts3D[0].at<float>(2, 0) / pnts3D[0].at<float>(3, 0) };
-					points[1] = { pnts3D[1].at<float>(0, 0) / pnts3D[1].at<float>(3, 0), pnts3D[1].at<float>(1, 0) / pnts3D[1].at<float>(3, 0), pnts3D[1].at<float>(2, 0) / pnts3D[1].at<float>(3, 0) };
-					if (ids[0] == 14) {
-						cv::putText(image1, cv::format("Right wrist: (%f,%f, %f)", points[0].x, points[0].y, points[0].z), cv::Point(50, 50), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.8, cv::Scalar(255, 255, 204), 1, false);
-						if (ids[1] == 0) {
-							cv::putText(image1, cv::format("Right elbow: (%f,%f, %f)", points[1].x, points[1].y, points[1].z), cv::Point(50, 70), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.8, cv::Scalar(255, 255, 204), 1, false);
-						} else {
-							cv::putText(image1, cv::format("Right shoulder: (%f,%f, %f)", points[1].x, points[1].y, points[1].z), cv::Point(50, 70), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.8, cv::Scalar(255, 255, 204), 1, false);
-						}
-					} else if (ids[0] == 21) {
-						cv::putText(image1, cv::format("Right shoulder: (%f,%f, %f)", points[0].x, points[0].y, points[0].z), cv::Point(50, 50), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.8, cv::Scalar(255, 255, 204), 1, false);
-						if (ids[1] == 0) {
-							cv::putText(image1, cv::format("Right elbow: (%f,%f, %f)", points[1].x, points[1].y, points[1].z), cv::Point(50, 70), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.8, cv::Scalar(255, 255, 204), 1, false);
-						} else {
-							cv::putText(image1, cv::format("Right wrist: (%f,%f, %f)", points[1].x, points[1].y, points[1].z), cv::Point(50, 70), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.8, cv::Scalar(255, 255, 204), 1, false);
-						}
-					} else {
-						cv::putText(image1, cv::format("Right elbow: (%f,%f, %f)", points[0].x, points[0].y, points[0].z), cv::Point(50, 50), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.8, cv::Scalar(255, 255, 204), 1, false);
-						if (ids[1] == 14) {
-							cv::putText(image1, cv::format("Right wrist: (%f,%f, %f)", points[1].x, points[1].y, points[1].z), cv::Point(70, 50), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.8, cv::Scalar(255, 255, 204), 1, false);
-						} else {
-							cv::putText(image1, cv::format("Right shoulder: (%f,%f, %f)", points[1].x, points[1].y, points[1].z), cv::Point(70, 50), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.8, cv::Scalar(255, 255, 204), 1, false);
-						}
-					}
-				} else {
-					points[0] = { pnts3D[0].at<float>(0, 0) / pnts3D[0].at<float>(3, 0), pnts3D[0].at<float>(1, 0) / pnts3D[0].at<float>(3, 0), pnts3D[0].at<float>(2, 0) / pnts3D[0].at<float>(3, 0) };
-					if (ids[0] == 14) {
-						cv::putText(image1, cv::format("Right wrist: (%f,%f, %f)", points[0].x, points[0].y, points[0].z), cv::Point(50, 50), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.8, cv::Scalar(255, 255, 204), 1, false);
-					} else if (ids[0] == 21) {
-						cv::putText(image1, cv::format("Right shoulder: (%f,%f, %f)", points[0].x, points[0].y, points[0].z), cv::Point(50, 50), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.8, cv::Scalar(255, 255, 204), 1, false);
-					} else {
-						cv::putText(image1, cv::format("Right elbow: (%f,%f, %f)", points[0].x, points[0].y, points[0].z), cv::Point(50, 50), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.8, cv::Scalar(255, 255, 204), 1, false);
-					}
-				}
 				//points[0] = {pnts3D[0].at<float>(0, 0) / pnts3D[0].at<float>(3, 0), pnts3D[0].at<float>(1, 0) / pnts3D[0].at<float>(3, 0), pnts3D[0].at<float>(2, 0) / pnts3D[0].at<float>(3, 0)};
 				//points[1] = {pnts3D[1].at<float>(0, 0) / pnts3D[1].at<float>(3, 0), pnts3D[1].at<float>(1, 0) / pnts3D[1].at<float>(3, 0), pnts3D[1].at<float>(2, 0) / pnts3D[1].at<float>(3, 0)};
 				//points[2] = {pnts3D[2].at<float>(0, 0) / pnts3D[2].at<float>(3, 0), pnts3D[2].at<float>(1, 0) / pnts3D[2].at<float>(3, 0), pnts3D[2].at<float>(2, 0) / pnts3D[2].at<float>(3, 0)};
@@ -508,6 +532,7 @@ void FindMarkers(const cv::String& filename, const Camera& camera1, const Camera
 		cv::imshow("out2", image2);
 		char key = (char)cv::waitKey(10);
 		if (key == 27) {
+			fs.release();
 			break;
 		}
 	}
